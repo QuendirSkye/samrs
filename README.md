@@ -12,3 +12,6 @@ A very basic CLI interface.
 
 ### samrs_gui
 Not a priority at the moment.
+
+## Notices:
+The `samrs/src/applist.rs` implementation is based on [PaulCombal/SteamAppsList](https://github.com/PaulCombal/SteamAppsList).
