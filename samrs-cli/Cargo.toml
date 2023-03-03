@@ -1,0 +1,15 @@
+[package]
+name = "samrs-cli"
+version = "0.1.0"
+authors = [ "Jonni Liljamo <jonni@liljamo.com>" ]
+edition = "2021"
+repository = "https://github.com/QuendirSkye/samrs"
+license = "GPL-3.0"
+
+[dependencies]
+samrs = { path = "../samrs" }
+
+tokio = { version = "1.26.0", features = ["full"] }
+clap = { version = "4.1.8", features = [ "derive" ] }
+
+indicatif = "0.17.3"
