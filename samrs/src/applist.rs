@@ -47,7 +47,12 @@ pub struct AchievementInfo {
 #[derive(Deserialize)]
 pub struct AppDetails {
     pub r#type: String,
-    pub achievements: Option<AchievementInfo>,
+    pub achievements: bool,
+}
+
+#[derive(Deserialize)]
+pub struct AppDetailsResponse {
+    pub details: AppDetails,
 }
 
 const APP_DETAILS_URL: &str =
@@ -55,12 +60,14 @@ const APP_DETAILS_URL: &str =
 
 /// Returns only games with achievements
 pub async fn filter_app_list_game_w_achievements(
-    app_list: &AppList,
-    progress: impl FnOnce(usize, usize) + Copy,
+    app_list: AppList,
+    progress: impl FnOnce(u64, u64, &str) + Copy,
 ) -> Vec<AppEntry> {
     let mut filtered_app_list: Vec<AppEntry> = vec![];
 
+    let mut status = "";
     let total = app_list.apps.len().clone();
+    let mut done: u64 = 0;
 
     for entry in &app_list.apps {
         let mut ok = false;
@@ -76,36 +83,58 @@ pub async fn filter_app_list_game_w_achievements(
                 Err(_) => {}
                 Ok(response) => {
                     if response.status() == 429 {
+                        status = "429";
                         // too many requests, wait 2 minutes
                         tokio::time::sleep(std::time::Duration::from_millis(1000 * 60 * 2)).await;
                         continue;
                     } else if response.status() == 502 {
+                        status = "502";
                         // randomly got bad gateway, wait 500ms
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         continue;
                     }
 
-                    match response.json::<AppDetails>().await {
+                    let bytes_res = response.bytes().await;
+                    match bytes_res {
                         Err(_) => {
-                            // apparently some urls return absolutely nothing,
-                            // so most likely that's what happened.
-                            // e.g. https://store.steampowered.com/api/appdetails/?filters=basic,achievements&appids=1444140
+                            status = "not sure";
                             ok = true;
                         }
-                        Ok(details) => app_details = Some(details),
-                    }
+                        Ok(bytes) => {
+                            let json_res: Result<serde_json::Value, serde_json::Error> =
+                                serde_json::from_slice(&bytes);
+                            match json_res {
+                                Err(_) => {
+                                    // apparently some urls return absolutely nothing,
+                                    // so most likely that's what happened.
+                                    // e.g. https://store.steampowered.com/api/appdetails/?filters=basic,achievements&appids=1444140
+                                    status = "nothing";
+                                    ok = true;
+                                }
+                                Ok(json) => {
+                                    app_details = Some(AppDetails {
+                                        r#type: json["type"].to_string(),
+                                        achievements: json["ahievements"].is_object(),
+                                    });
+                                    ok = true;
+                                }
+                            }
+                        }
+                    };
                 }
             }
         }
 
         if let Some(app_details) = app_details {
-            if app_details.r#type == String::from("game") && app_details.achievements.is_some() {
+            if app_details.r#type == String::from("game") && app_details.achievements {
                 filtered_app_list.push(entry.clone());
             }
         }
 
-        progress(total, filtered_app_list.len());
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        done += 1;
+        progress(total as u64, done, status);
+        status = "";
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     filtered_app_list

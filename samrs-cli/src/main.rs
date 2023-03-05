@@ -7,14 +7,14 @@
  */
 
 use clap::{Parser, Subcommand};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{HumanDuration, ProgressBar, ProgressStyle};
 use poll_promise::Promise;
-use samrs::applist::{fetch_app_list, filter_app_list_game_w_achievements};
+use samrs::applist::{fetch_app_list, filter_app_list_game_w_achievements, AppList};
 use tokio::{
     fs::File,
-    io::{self, AsyncWriteExt},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     runtime,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
@@ -39,7 +39,14 @@ enum AppListCmds {
         #[arg(default_value = "./app_list_all.json")]
         output_path: String,
     },
-    Filter,
+    Filter {
+        #[arg(short)]
+        #[arg(default_value = "./app_list_all.json")]
+        input_path: String,
+        #[arg(short)]
+        #[arg(default_value = "./app_list_game_w_achievements.json")]
+        output_path: String,
+    },
 }
 
 fn main() -> io::Result<()> {
@@ -111,22 +118,65 @@ fn main() -> io::Result<()> {
                 };
                 rt.block_on(future);
             }
-            AppListCmds::Filter => {
-                /*
-                let pb = ProgressBar::new(0);
-                pb.set_style(ProgressStyle::default_bar()
-                    .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})").unwrap()
-                    .progress_chars("#>-"));
-                pb.set_message("Fetching app list...");
+            AppListCmds::Filter {
+                input_path,
+                output_path,
+            } => {
+                //let pb = ProgressBar::new(0);
+                //pb.set_style(ProgressStyle::default_bar()
+                //    .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})").unwrap()
+                //    .progress_chars("#>-"));
+                //pb.set_message("Filtering app list...");
 
-                // TODO: take from input or default to this, yeh?
-                let app_list =
-                    filter_app_list_game_w_achievements("./app_list_all.json", |total, done| {
-                        pb.set_length(total);
-                        pb.set_position(done);
-                    })
-                    .await;
-                */
+                let started = Instant::now();
+                let future = async {
+                    let mut applist_file = match File::open(input_path).await {
+                        Err(_) => panic!("failed to open input file"),
+                        Ok(applist) => applist,
+                    };
+
+                    let mut applist_contents = vec![];
+                    match applist_file.read_to_end(&mut applist_contents).await {
+                        Err(_) => panic!("failed to read input file"),
+                        Ok(_) => {}
+                    }
+
+                    let applist = match serde_json::from_slice::<AppList>(&applist_contents) {
+                        Err(_) => panic!("failed to deserialize input file"),
+                        Ok(res) => res,
+                    };
+
+                    let promise = Promise::spawn_async(async move {
+                        filter_app_list_game_w_achievements(applist, move |total, done, status| {
+                            println!("Progress {}/{}, {}", done, total, status);
+                        })
+                        .await
+                    });
+                    loop {
+                        if let Some(filtered_applist) = promise.ready() {
+                            //pb.finish_with_message("App list filtered!");
+
+                            let json = serde_json::to_string(filtered_applist);
+                            match json {
+                                Err(_) => println!("failed to serialize filtered_applist and save"),
+                                Ok(json) => {
+                                    match save_to_file(&output_path, json.as_bytes()).await {
+                                        Err(_) => panic!("failed to save filtered_applist to file"),
+                                        Ok(_) => return,
+                                    }
+                                }
+                            }
+
+                            return;
+                        } else {
+                            //pb.set_length(pbtotal);
+                            //pb.set_position(pbdone);
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                    }
+                };
+                rt.block_on(future);
+                println!("took: {}", HumanDuration(started.elapsed()));
             }
         },
     }

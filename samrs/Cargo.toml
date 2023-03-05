@@ -21,3 +21,6 @@ features = [ "default-tls", "json" ]
 version = ">=1.0, <2.0"
 default-features = false
 features = [ "derive" ]
+
+[dependencies.serde_json]
+version = ">=1.0, <2.0"
