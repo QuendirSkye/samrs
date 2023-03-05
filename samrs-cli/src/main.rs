@@ -34,7 +34,11 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AppListCmds {
-    DownloadFull,
+    DownloadFull {
+        #[arg(short)]
+        #[arg(default_value = "./app_list_all.json")]
+        output_path: String,
+    },
     Filter,
 }
 
@@ -49,7 +53,7 @@ fn main() -> io::Result<()> {
 
     match cli.command {
         Commands::AppList(cmds) => match cmds {
-            AppListCmds::DownloadFull => {
+            AppListCmds::DownloadFull { output_path } => {
                 let pb = ProgressBar::new(0);
                 pb.set_style(
                     ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
@@ -88,11 +92,7 @@ fn main() -> io::Result<()> {
                                     match json {
                                         Err(_) => println!("failed to serialize applist and save"),
                                         Ok(json) => {
-                                            match save_to_file(
-                                                "./app_list_all.json",
-                                                json.as_bytes(),
-                                            )
-                                            .await
+                                            match save_to_file(&output_path, json.as_bytes()).await
                                             {
                                                 Err(_) => panic!("failed to save applist to file"),
                                                 Ok(_) => return,
