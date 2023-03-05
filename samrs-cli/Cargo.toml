@@ -9,7 +9,10 @@ license = "GPL-3.0"
 [dependencies]
 samrs = { path = "../samrs" }
 
-tokio = { version = "1.26.0", features = ["full"] }
+tokio = { version = "1.26.0", features = [ "full" ] }
+poll-promise = { version = "0.2.0", features = [ "tokio" ] }
+
 clap = { version = "4.1.8", features = [ "derive" ] }
 
+console = "0.15.5"
 indicatif = "0.17.3"

@@ -5,11 +5,10 @@
  * See LICENSE for licensing information.
  */
 
-use std::cmp::min;
-
-use async_std::{fs::File, io::WriteExt, stream::StreamExt};
 use reqwest;
 use serde::Deserialize;
+
+use crate::SAMError;
 
 #[derive(Clone, Deserialize)]
 pub struct AppEntry {
@@ -18,46 +17,26 @@ pub struct AppEntry {
 
 #[derive(Deserialize)]
 pub struct AppList {
-    pub applist: Vec<AppEntry>,
+    pub apps: Vec<AppEntry>,
+}
+
+#[derive(Deserialize)]
+pub struct AppListResponse {
+    pub applist: AppList,
 }
 
 const APP_LIST_URL: &str = "https://api.steampowered.com/ISteamApps/GetAppList/v2/";
 
-pub async fn fetch_app_list(path: &str, progress: impl FnOnce(u64, u64) + Copy) -> Result<(), ()> {
-    // TODO: lots of errors to handle...
+pub async fn fetch_app_list() -> Result<AppList, SAMError> {
+    let resp = reqwest::get(APP_LIST_URL).await;
 
-    let resp = reqwest::Client::new()
-        .get(APP_LIST_URL)
-        .send()
-        .await
-        .unwrap();
-
-    let total_size = resp.content_length().unwrap_or(0);
-
-    let mut file = File::create(path).await.or(Err(()))?;
-    let mut downloaded: u64 = 0;
-    let mut stream = resp.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item.or(Err(()))?;
-        file.write_all(&chunk).await.or(Err(()))?;
-        downloaded = min(downloaded + (chunk.len() as u64), total_size);
-        progress(total_size, downloaded);
-    }
-
-    Ok(())
-
-    /*
-    let app_list = reqwest::get(APP_LIST_URL).await;
-
-    match app_list {
-        Err(_) => Err(()),
-        Ok(response) => match response.json::<AppList>().await {
-            Err(_) => Err(()),
-            Ok(res) => Ok(res),
+    match resp {
+        Err(_) => Err(SAMError::AppListRequestError),
+        Ok(res) => match res.json::<AppListResponse>().await {
+            Err(err) => Err(SAMError::AppListDeserializationError(err.to_string())),
+            Ok(res) => Ok(res.applist),
         },
     }
-    */
 }
 
 #[derive(Deserialize)]
@@ -75,10 +54,15 @@ const APP_DETAILS_URL: &str =
     "https://store.steampowered.com/api/appdetails/?filters=basic,achievements&appids=";
 
 /// Returns only games with achievements
-pub async fn filter_app_list_game_w_achievements(app_list: &AppList) -> Vec<AppEntry> {
+pub async fn filter_app_list_game_w_achievements(
+    app_list: &AppList,
+    progress: impl FnOnce(usize, usize) + Copy,
+) -> Vec<AppEntry> {
     let mut filtered_app_list: Vec<AppEntry> = vec![];
 
-    for entry in &app_list.applist {
+    let total = app_list.apps.len().clone();
+
+    for entry in &app_list.apps {
         let mut ok = false;
         let mut app_details: Option<AppDetails> = None;
 
@@ -93,12 +77,11 @@ pub async fn filter_app_list_game_w_achievements(app_list: &AppList) -> Vec<AppE
                 Ok(response) => {
                     if response.status() == 429 {
                         // too many requests, wait 2 minutes
-                        async_std::task::sleep(std::time::Duration::from_millis(1000 * 60 * 2))
-                            .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(1000 * 60 * 2)).await;
                         continue;
                     } else if response.status() == 502 {
                         // randomly got bad gateway, wait 500ms
-                        async_std::task::sleep(std::time::Duration::from_millis(500)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         continue;
                     }
 
@@ -121,7 +104,8 @@ pub async fn filter_app_list_game_w_achievements(app_list: &AppList) -> Vec<AppE
             }
         }
 
-        async_std::task::sleep(std::time::Duration::from_millis(100)).await;
+        progress(total, filtered_app_list.len());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     filtered_app_list

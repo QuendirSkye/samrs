@@ -7,6 +7,7 @@
  */
 
 use steamworks::{Client, SResult, SingleClient};
+use thiserror::Error;
 
 pub mod applist;
 
@@ -29,4 +30,12 @@ impl SAM {
             single_client,
         })
     }
+}
+
+#[derive(Debug, Error)]
+pub enum SAMError {
+    #[error("there was an error in requesting the app list")]
+    AppListRequestError,
+    #[error("there was an error in deserializing the app list response")]
+    AppListDeserializationError(String),
 }

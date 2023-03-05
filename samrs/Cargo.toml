@@ -9,12 +9,13 @@ license = "GPL-3.0"
 [dependencies]
 steamworks = "0.9.0"
 
-async-std = "1.12.0"
+thiserror = "^1.0"
+tokio = { version = "1.26.0", features = [ "full" ] }
 
 [dependencies.reqwest]
 version = ">=0.11, <0.12"
 default-features = false
-features = [ "default-tls", "json", "stream" ]
+features = [ "default-tls", "json" ]
 
 [dependencies.serde]
 version = ">=1.0, <2.0"
