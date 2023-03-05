@@ -6,13 +6,16 @@
  * See LICENSE for licensing information.
  */
 
-use std::{thread, time::Duration};
-
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use poll_promise::Promise;
 use samrs::applist::{fetch_app_list, filter_app_list_game_w_achievements};
-use tokio::runtime;
+use tokio::{
+    fs::File,
+    io::{self, AsyncWriteExt},
+    runtime,
+    time::Duration,
+};
 
 #[derive(Parser)]
 #[command(name = "samrs-cli")]
@@ -35,7 +38,7 @@ enum AppListCmds {
     Filter,
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     let rt = runtime::Builder::new_current_thread()
@@ -80,6 +83,23 @@ fn main() {
                                 }
                                 Ok(applist) => {
                                     pb.finish_with_message("Fetched app list!");
+
+                                    let json = serde_json::to_string(applist);
+                                    match json {
+                                        Err(_) => println!("failed to serialize applist and save"),
+                                        Ok(json) => {
+                                            match save_to_file(
+                                                "./app_list_all.json",
+                                                json.as_bytes(),
+                                            )
+                                            .await
+                                            {
+                                                Err(_) => panic!("failed to save applist to file"),
+                                                Ok(_) => return,
+                                            }
+                                        }
+                                    }
+
                                     return;
                                 }
                             }
@@ -110,4 +130,14 @@ fn main() {
             }
         },
     }
+
+    Ok(())
+}
+
+async fn save_to_file(path: &str, content: &[u8]) -> io::Result<()> {
+    let mut file = File::create(path).await?;
+
+    file.write_all(content).await?;
+
+    Ok(())
 }

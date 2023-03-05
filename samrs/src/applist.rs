@@ -6,21 +6,21 @@
  */
 
 use reqwest;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::SAMError;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct AppEntry {
     pub appid: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AppList {
     pub apps: Vec<AppEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AppListResponse {
     pub applist: AppList,
 }
