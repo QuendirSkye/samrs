@@ -6,16 +6,16 @@
  * See LICENSE for licensing information.
  */
 
-use clap::{Parser, Subcommand};
-use indicatif::{HumanDuration, ProgressBar, ProgressStyle};
-use poll_promise::Promise;
-use samrs::applist::{fetch_app_list, filter_app_list_game_w_achievements, AppList};
+use clap::{command, Parser, Subcommand};
+use indicatif::HumanDuration;
+use samrs::{SAMGame, SAM};
 use tokio::{
     fs::File,
     io::{self, AsyncReadExt, AsyncWriteExt},
     runtime,
-    time::{Duration, Instant},
 };
+
+mod applist;
 
 #[derive(Parser)]
 #[command(name = "samrs-cli")]
@@ -27,164 +27,126 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[command(rename_all = "lower")]
 enum Commands {
     #[command(subcommand)]
+    #[command(about = "")]
     AppList(AppListCmds),
+    #[command(about = "List all games on current account")]
+    ListGames {
+        #[arg(short = 'i', long = "input")]
+        #[arg(default_value = "./app_list_game_w_achievements.json")]
+        input_path: String,
+    },
+    #[command(about = "Manage apps on current account")]
+    #[command(arg_required_else_help(true))]
+    App {
+        #[command(subcommand)]
+        command: AppCmds,
+
+        #[arg(short = 'i', long = "appid")]
+        #[arg(help = "App ID of the app to manage")]
+        appid: Option<usize>,
+    },
 }
 
 #[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum AppCmds {
+    #[command(about = "List all achievements for the given App ID")]
+    List,
+    #[command(about = "Set the state of a specific achievement for the given App ID")]
+    Set,
+    #[command(about = "Set the state of all achievements for the given App ID")]
+    SetAll,
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
 enum AppListCmds {
-    DownloadFull {
-        #[arg(short)]
+    #[command(about = "Download all app ids")]
+    DlAll {
+        #[arg(short = 'o', long = "output")]
+        #[arg(help = "Where to store the output")]
         #[arg(default_value = "./app_list_all.json")]
-        output_path: String,
-    },
-    Filter {
-        #[arg(short)]
-        #[arg(default_value = "./app_list_all.json")]
-        input_path: String,
-        #[arg(short)]
-        #[arg(default_value = "./app_list_game_w_achievements.json")]
         output_path: String,
     },
 }
 
 fn main() -> io::Result<()> {
-    let cli = Cli::parse();
-
     let rt = runtime::Builder::new_current_thread()
         .enable_time()
         .enable_io()
         .build()
         .expect("failed to create runtime");
 
+    let cli = Cli::parse();
+
     match cli.command {
-        Commands::AppList(cmds) => match cmds {
-            AppListCmds::DownloadFull { output_path } => {
-                let pb = ProgressBar::new(0);
-                pb.set_style(
-                    ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
-                        .unwrap()
-                        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-                );
-                pb.set_message("Fetching app list...");
-
-                let future = async {
-                    let promise = Promise::spawn_async(async move { fetch_app_list().await });
-                    loop {
-                        if let Some(applist) = promise.ready() {
-                            match applist {
-                                Err(err) => {
-                                    match err {
-                                        samrs::SAMError::AppListDeserializationError(ierr) => {
-                                            pb.finish_with_message(format!(
-                                                "Fetching app list failed! '{}'",
-                                                ierr
-                                            ));
-                                        }
-                                        _ => {
-                                            pb.finish_with_message(format!(
-                                                "Fetching app list failed! '{}'",
-                                                err
-                                            ));
-                                        }
-                                    }
-
-                                    return;
-                                }
-                                Ok(applist) => {
-                                    pb.finish_with_message("Fetched app list!");
-
-                                    let json = serde_json::to_string(applist);
-                                    match json {
-                                        Err(_) => println!("failed to serialize applist and save"),
-                                        Ok(json) => {
-                                            match save_to_file(&output_path, json.as_bytes()).await
-                                            {
-                                                Err(_) => panic!("failed to save applist to file"),
-                                                Ok(_) => return,
-                                            }
-                                        }
-                                    }
-
-                                    return;
-                                }
-                            }
-                        } else {
-                            pb.tick();
-                            tokio::time::sleep(Duration::from_millis(5)).await;
-                        }
-                    }
-                };
-                rt.block_on(future);
-            }
-            AppListCmds::Filter {
-                input_path,
-                output_path,
-            } => {
-                //let pb = ProgressBar::new(0);
-                //pb.set_style(ProgressStyle::default_bar()
-                //    .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})").unwrap()
-                //    .progress_chars("#>-"));
-                //pb.set_message("Filtering app list...");
-
-                let started = Instant::now();
-                let future = async {
-                    let mut applist_file = match File::open(input_path).await {
-                        Err(_) => panic!("failed to open input file"),
-                        Ok(applist) => applist,
-                    };
-
-                    let mut applist_contents = vec![];
-                    match applist_file.read_to_end(&mut applist_contents).await {
-                        Err(_) => panic!("failed to read input file"),
-                        Ok(_) => {}
-                    }
-
-                    let applist = match serde_json::from_slice::<AppList>(&applist_contents) {
-                        Err(_) => panic!("failed to deserialize input file"),
-                        Ok(res) => res,
-                    };
-
-                    let promise = Promise::spawn_async(async move {
-                        filter_app_list_game_w_achievements(applist, move |total, done, status| {
-                            println!("Progress {}/{}, {}", done, total, status);
-                        })
-                        .await
-                    });
-                    loop {
-                        if let Some(filtered_applist) = promise.ready() {
-                            //pb.finish_with_message("App list filtered!");
-
-                            let json = serde_json::to_string(filtered_applist);
-                            match json {
-                                Err(_) => println!("failed to serialize filtered_applist and save"),
-                                Ok(json) => {
-                                    match save_to_file(&output_path, json.as_bytes()).await {
-                                        Err(_) => panic!("failed to save filtered_applist to file"),
-                                        Ok(_) => return,
-                                    }
-                                }
-                            }
-
-                            return;
-                        } else {
-                            //pb.set_length(pbtotal);
-                            //pb.set_position(pbdone);
-                            tokio::time::sleep(Duration::from_millis(5)).await;
-                        }
-                    }
-                };
-                rt.block_on(future);
-                println!("took: {}", HumanDuration(started.elapsed()));
+        Commands::AppList(cmd) => match cmd {
+            AppListCmds::DlAll { output_path } => {
+                applist::download_all(&rt, &output_path);
             }
         },
+        Commands::ListGames { input_path } => {
+            let started = tokio::time::Instant::now();
+            let future = async {
+                let mut applist_file = match tokio::fs::File::open(input_path).await {
+                    Err(_) => panic!("failed to open input file"),
+                    Ok(applist) => applist,
+                };
+
+                let mut applist_contents = vec![];
+                match applist_file.read_to_end(&mut applist_contents).await {
+                    Err(_) => panic!("failed to read input file"),
+                    Ok(_) => {}
+                }
+
+                let applist = match serde_json::from_slice::<Vec<SAMGame>>(&applist_contents) {
+                    Err(_) => panic!("failed to deserialize input file"),
+                    Ok(res) => res,
+                };
+
+                let sam_res = SAM::init();
+                match sam_res {
+                    Err(_) => panic!("sam failed to init"),
+                    Ok(mut sam) => {
+                        _ = sam.populate_user_games(applist);
+                        let owned_games = sam.get_user_games();
+
+                        for game in owned_games {
+                            println!("{}\t : {}", game.appid, game.name);
+                        }
+                    }
+                }
+            };
+            rt.block_on(future);
+            println!("took: {}", HumanDuration(started.elapsed()));
+        }
+        Commands::App { command, appid } => {
+            let appid = match appid {
+                None => panic!("appid must be provided"),
+                Some(appid) => appid,
+            };
+
+            match command {
+                AppCmds::List => {
+                    //
+                }
+                AppCmds::Set => {
+                    //
+                }
+                AppCmds::SetAll => {
+                    //
+                }
+            }
+        }
     }
 
     Ok(())
 }
 
-async fn save_to_file(path: &str, content: &[u8]) -> io::Result<()> {
+pub async fn save_to_file(path: &str, content: &[u8]) -> io::Result<()> {
     let mut file = File::create(path).await?;
 
     file.write_all(content).await?;

@@ -12,32 +12,59 @@ use crate::SAMError;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct AppEntry {
-    pub appid: u32,
+    pub appid: usize,
+    pub name: String,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct AppList {
+struct AppList {
     pub apps: Vec<AppEntry>,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct AppListResponse {
+struct AppListResponse {
     pub applist: AppList,
 }
 
 const APP_LIST_URL: &str = "https://api.steampowered.com/ISteamApps/GetAppList/v2/";
 
-pub async fn fetch_app_list() -> Result<AppList, SAMError> {
+pub async fn fetch_applist() -> Result<Vec<AppEntry>, SAMError> {
     let resp = reqwest::get(APP_LIST_URL).await;
 
     match resp {
         Err(_) => Err(SAMError::AppListRequestError),
         Ok(res) => match res.json::<AppListResponse>().await {
             Err(err) => Err(SAMError::AppListDeserializationError(err.to_string())),
-            Ok(res) => Ok(res.applist),
+            Ok(res) => {
+                let mut apps = vec![];
+                for entry in res.applist.apps {
+                    apps.push(AppEntry {
+                        appid: entry.appid as usize,
+                        name: entry.name,
+                    });
+                }
+                Ok(apps)
+            }
         },
     }
 }
+
+/*
+// TODO/TOFIX/NOTE/WHATEVER
+// Supposed to be in use with the following in the README.md:
+// ## Notices:
+// The `samrs/src/applist.rs` implementation is based on [PaulCombal/SteamAppsList](https://github.com/PaulCombal/SteamAppsList).
+//
+// But this is currently in fact, not in use.
+// I don't really have an idea on what do for filtering down the apps, since this actually takes forever.
+//
+// It could be written in a way that it would be possible to run it as a Github Action,
+// which runs automatically once a month, or manually on request.
+// That could then upload the filtered down list somewhere, either Git LFS or somewhere else.
+//
+// Not a major issue, since it only takes around 3 seconds (on my machine, at least) to
+// compare the full list of almost a 160k ids to my library.
+//
 
 #[derive(Deserialize)]
 pub struct AchievementInfo {
@@ -59,17 +86,17 @@ const APP_DETAILS_URL: &str =
     "https://store.steampowered.com/api/appdetails/?filters=basic,achievements&appids=";
 
 /// Returns only games with achievements
-pub async fn filter_app_list_game_w_achievements(
-    app_list: AppList,
+pub async fn filter_applist_game_w_achievements(
+    applist: Vec<AppEntry>,
     progress: impl FnOnce(u64, u64, &str) + Copy,
 ) -> Vec<AppEntry> {
-    let mut filtered_app_list: Vec<AppEntry> = vec![];
+    let mut filtered_applist: Vec<AppEntry> = vec![];
 
     let mut status = "";
-    let total = app_list.apps.len().clone();
+    let total = applist.len().clone();
     let mut done: u64 = 0;
 
-    for entry in &app_list.apps {
+    for entry in &applist {
         let mut ok = false;
         let mut app_details: Option<AppDetails> = None;
 
@@ -127,7 +154,7 @@ pub async fn filter_app_list_game_w_achievements(
 
         if let Some(app_details) = app_details {
             if app_details.r#type == String::from("game") && app_details.achievements {
-                filtered_app_list.push(entry.clone());
+                filtered_applist.push(entry.clone());
             }
         }
 
@@ -137,5 +164,6 @@ pub async fn filter_app_list_game_w_achievements(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    filtered_app_list
+    filtered_applist
 }
+*/
